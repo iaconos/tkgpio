@@ -33,7 +33,7 @@ class TkCircuit(metaclass=SingletonMeta):
             "light_sensors": [],
             "adc": None,
             "infrared_receiver": None, "infrared_emitter": None,
-            "labels": [],
+            "labels": [],"rgb_leds":[],
         }
         
         default_setup.update(setup)
@@ -55,15 +55,21 @@ class TkCircuit(metaclass=SingletonMeta):
         self._outputs += [self.add_device(TkBuzzer, parameters) for parameters in setup["buzzers"]]
         self._outputs += [self.add_device(TkMotor, parameters) for parameters in setup["motors"]]
         self._outputs += [self.add_device(TkServo, parameters) for parameters in setup["servos"]]
+        self._outputs += [self.add_device(TkRGBLED, parameters) for parameters in setup["rgb_leds"]]
         
         self._lcds = [self.add_device(TkLCD, parameters) for parameters in setup["lcds"]]
         
         if setup["adc"] != None:
             spi = TkSPI(setup["adc"]["mcp_chip"])
-            for parameters in setup["adc"]["potenciometers"]:
-                parameters["tk_spi"] = spi
-                self.add_device(TkPotentiometer, parameters)
-                
+            if "potenciometers" in setup["adc"]:
+                for parameters in setup["adc"]["potenciometers"]:
+                    parameters["tk_spi"] = spi
+                    self.add_device(TkPotentiometer, parameters)
+            if "temperature_sensors" in setup["adc"]:
+                for parameters in setup["adc"]["temperature_sensors"]:
+                    parameters["tk_spi"] = spi
+                    self.add_device(TkTemperatureSensor, parameters)     
+        
         for parameters in setup["buttons"]:
             self.add_device(TkButton, parameters)
             
@@ -236,33 +242,99 @@ class TkBuzzer(TkDevice):
 class TkLED(TkDevice):
     on_image = None
     
-    def __init__(self, root, x, y, name, pin):
+    def __init__(self, root, x, y, name, color, pin):
         super().__init__(root, x, y, name)
         
         self._pin = Device.pin_factory.pin(pin)
         
         self._previous_state = None
+        self._led_color=color
         
-        TkLED.on_image = self._set_image_for_state("led_on.png", "on", (19, 30))
-        self._set_image_for_state("led_off.png", "off", (19, 30))
+        TkLED.image=self._set_image_for_state("led_off.png", "default", (19, 30))
+        self.bulb=self._set_image_for_state("led_bulb.png","off", (19,21))
         self._create_main_widget(Label, "off")
         
     def update(self):
         if self._previous_state != self._pin.state:
-            if isinstance(self._pin.state, float):
-                converter = ImageEnhance.Color(TkLED.on_image)
-                desaturated_image = converter.enhance(self._pin.state)
-                self._change_widget_image(desaturated_image)
-            elif self._pin.state == True:
-                self._change_widget_image("on")
+            r=0
+            g=0
+            b=0
+            if self._led_color=="red":
+                r=255
+            elif self._led_color=="blue":
+                b=255
+            elif self._led_color=="green":
+                g=255
+            elif self._led_color=="yellow":
+                r=255
+                g=255
             else:
-                self._change_widget_image("off")
+                r=255
+                g=255
+                b=255
+            fill_color=(r,g,b)
+            alpha = self._pin.state
+            border_color=(204,204,204)
+            background=TkLED.image.convert("RGBA")
+            bulb_off=self.bulb.convert("RGBA")
+            bulb_overlay=Image.new("RGBA",bulb_off.size,(255,255,255,0))
+            draw=ImageDraw.Draw(bulb_overlay)
+            draw.ellipse([2,0,16,14],fill_color,border_color,1)
+            draw.rectangle([2,7,16,14],fill_color,border_color,1)
+            draw.rectangle([(3,7), (15,13)], fill_color)
+            draw.rectangle([0,16,18,20],fill_color,border_color,1)
+            bulb_state = Image.blend(bulb_off, bulb_overlay,alpha)
+            bulb_out=Image.new("RGBA",background.size,(255,255, 255, 0))
+            bulb_out.paste(bulb_state,(0,0))
+            image_out = Image.alpha_composite(background, bulb_out)
+            self._change_widget_image(image_out)
              
-            self._previous_state = self._pin.state
-            
+            self._previous_state = self._pin.state           
             self._redraw()
             
-
+class TkRGBLED(TkDevice):
+    image = None
+    
+    def __init__(self, root, x, y, name, rpin, gpin, bpin):
+        super().__init__(root, x, y, name)
+        
+        self._rpin = Device.pin_factory.pin(rpin)
+        self._gpin = Device.pin_factory.pin(gpin)
+        self._bpin = Device.pin_factory.pin(bpin)
+        
+        self._previous_state = None
+        self._current_state = (self._rpin.state, self._gpin.state, self._bpin.state)
+        
+        TkRGBLED.image = self._set_image_for_state("rgb_led_off.png", "default", (19, 30))
+        self.bulb=self._set_image_for_state("led_bulb.png","off", (19,21))
+        self._create_main_widget(Label, "default",20)
+        
+    def update(self):
+        self._current_state=(self._rpin.state, self._gpin.state, self._bpin.state)
+        if self._previous_state != self._current_state:
+            r=round(self._rpin.state*255)
+            g=round(self._gpin.state*255)
+            b=round(self._bpin.state*255)
+            fill_color=(r,g,b)
+            alpha = max(self._current_state)
+            border_color=(204,204,204)
+            background=TkRGBLED.image.convert("RGBA")
+            bulb_off=self.bulb.convert("RGBA")
+            bulb_overlay=Image.new("RGBA",bulb_off.size,(255,255,255,0))
+            draw=ImageDraw.Draw(bulb_overlay)
+            draw.ellipse([2,0,16,14],fill_color,border_color,1)
+            draw.rectangle([2,7,16,14],fill_color,border_color,1)
+            draw.rectangle([(3,7), (15,13)], fill_color)
+            draw.rectangle([0,16,18,20],fill_color,border_color,1)
+            bulb_state = Image.blend(bulb_off, bulb_overlay,alpha)
+            bulb_out=Image.new("RGBA",background.size,(255,255, 255, 0))
+            bulb_out.paste(bulb_state,(0,0))
+            image_out = Image.alpha_composite(background, bulb_out)
+            self._change_widget_image(image_out)
+             
+            self._previous_state = self._current_state           
+            self._redraw()
+            
 class TkMotor(TkDevice):
     _image = None
     
@@ -533,7 +605,33 @@ class TkPotentiometer(TkDevice):
         
     def _scale_changed(self, value):
         self._tk_spi.mock_spi.set_value_for_channel(float(value), self._channel)
-            
+
+class TkTemperatureSensor(TkDevice):
+    def __init__(self, root, x, y, name, tk_spi, channel, sensor_min_temperature, sensor_max_temperature, contextual_min_temperature, contextual_max_temperature):
+        super().__init__(root, x, y, name)
+        
+        self._tk_spi = tk_spi
+        self._channel = channel
+        self._sensor_min_temperature=sensor_min_temperature
+        self._sensor_temperature_range=sensor_max_temperature-sensor_min_temperature
+        contextual_temperature_range=contextual_max_temperature-contextual_min_temperature
+        scale_resolution=contextual_temperature_range/100.0
+        
+        self._scale = Scale(root, from_=contextual_min_temperature, to=contextual_max_temperature, resolution=scale_resolution, showvalue=1,
+            orient=HORIZONTAL, command=self._scale_changed, sliderlength=20, length=150, highlightthickness = 0, background="white")
+        self._scale.place(x=x, y=y)
+        self._scale.set((contextual_temperature_range//2)+contextual_min_temperature)
+        self._scale_changed(self._scale.get())
+        
+    def _scale_changed(self, value):
+        scaled_sensor_min=0
+        scaled_sensor_max=self._sensor_temperature_range
+        if (self._sensor_min_temperature<=0):
+            scaled_contextual_value=float(value)+abs(self._sensor_min_temperature)
+        else:
+            scaled_contextual_value=float(value)-abs(self._sensor_min_temperature)
+        output_value=scaled_contextual_value/scaled_sensor_max
+        self._tk_spi.mock_spi.set_value_for_channel(output_value, self._channel)
             
 class TkInfraredReceiver(TkDevice, metaclass=SingletonMeta):
 
